@@ -35,7 +35,7 @@ def predictTest(trainFeatures,trainLabels,testFeatures):
     
 # Run this code only if being used as a script, not being imported
 if __name__ == "__main__":
-    data = np.loadtxt('C:/Users/ethan/Downloads/spamTrain1.csv',delimiter=',')
+    data = np.loadtxt('./spamTrain1.csv',delimiter=',')
     # Randomly shuffle rows of data set then separate labels (last column)
     shuffleIndex = np.arange(np.shape(data)[0])
     np.random.shuffle(shuffleIndex)
