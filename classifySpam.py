@@ -5,6 +5,7 @@ Demo of 10-fold cross-validation using Random Forest on spam data
 @author: Kevin S. Xu
 """
 
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
@@ -18,8 +19,18 @@ def aucCV(features, labels):
     model = make_pipeline(KNNImputer(missing_values=-1, n_neighbors=5),
                           RandomForestClassifier(n_estimators=100, random_state=42))
     
+    # Track the start time
+    start_time = time.time()
+    
     # Perform cross-validation with AUC as the scoring metric
     scores = cross_val_score(model, features, labels, cv=10, scoring='roc_auc')
+    
+    # Track the end time
+    end_time = time.time()
+    
+    # Calculate and print the time taken
+    elapsed_time = end_time - start_time
+    print(f"Time taken for 10-fold cross-validation: {elapsed_time:.2f} seconds")
     
     return scores
 
@@ -28,11 +39,24 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
     model = make_pipeline(KNNImputer(missing_values=-1, n_neighbors=5),
                           RandomForestClassifier(n_estimators=100, random_state=42))
     
+    # Track the start time
+    start_time = time.time()
+    
     # Train the model
     model.fit(trainFeatures, trainLabels)
     
-    # Return the predicted probabilities for class 1 (spam)
+    # Track the end time after training
+    end_time_training = time.time()
+    elapsed_training = end_time_training - start_time
+    print(f"Time taken for training: {elapsed_training:.2f} seconds")
+    
+    # Predict probabilities for the test set
     testOutputs = model.predict_proba(testFeatures)[:, 1]
+    
+    # Track the end time after prediction
+    end_time_prediction = time.time()
+    elapsed_prediction = end_time_prediction - end_time_training
+    print(f"Time taken for prediction: {elapsed_prediction:.2f} seconds")
     
     return testOutputs
 
