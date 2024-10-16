@@ -11,69 +11,93 @@ import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import KNNImputer, SimpleImputer
 from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.metrics import roc_auc_score, roc_curve
 
 desiredFPR = 0.01
 
 def aucCV(features, labels):
     # Define the pipeline with KNN imputation and Random Forest
-    model = make_pipeline(KNNImputer(missing_values=-1, n_neighbors=5),
-                          RandomForestClassifier(n_estimators=100, random_state=42))
+    model = make_pipeline(
+        KNNImputer(missing_values=-1),  # KNNImputer without specifying n_neighbors here
+        RandomForestClassifier(n_jobs=-1, random_state=42)
+    )
     
-    # Track the start time
-    start_time = time.time()
+    # Define the parameter grid to search
+    param_grid = {
+        'knnimputer__n_neighbors': [3, 5, 7],  # Adding n_neighbors for KNN imputer
+        'randomforestclassifier__n_estimators': [100, 200, 300],
+        'randomforestclassifier__max_depth': [None, 10, 20],
+        'randomforestclassifier__min_samples_split': [2, 5, 10]
+    }
     
-    # Perform cross-validation with AUC as the scoring metric
-    scores = cross_val_score(model, features, labels, cv=10, scoring='roc_auc')
+    # Initialize GridSearchCV
+    grid_search = GridSearchCV(
+        estimator=model, 
+        param_grid=param_grid, 
+        cv=5, 
+        scoring='roc_auc', 
+        n_jobs=-1,
+        verbose=0  # Suppress detailed output
+    )
     
-    # Track the end time
-    end_time = time.time()
+    # Perform grid search cross-validation
+    grid_search.fit(features, labels)
     
-    # Calculate and print the time taken
-    elapsed_time = end_time - start_time
-    print(f"Time taken for 10-fold cross-validation: {elapsed_time:.2f} seconds")
+    # Return the best score from the grid search
+    print(f"Best parameters found: {grid_search.best_params_}")
+    print(f"Best AUC score: {grid_search.best_score_}")
     
-    return scores
+    return grid_search.best_score_
 
-def tprAtFPR(labels,outputs,desiredFPR):
-    fpr,tpr,thres = roc_curve(labels,outputs)
-    # True positive rate for highest false positive rate < 0.01
-    maxFprIndex = np.where(fpr<=desiredFPR)[0][-1]
+def tprAtFPR(labels, outputs, desiredFPR):
+    fpr, tpr, thres = roc_curve(labels, outputs)
+    # True positive rate for highest false positive rate <= desiredFPR
+    maxFprIndex = np.where(fpr <= desiredFPR)[0][-1]
     fprBelow = fpr[maxFprIndex]
-    fprAbove = fpr[maxFprIndex+1]
+    fprAbove = fpr[maxFprIndex + 1]
     # Find TPR at exactly desired FPR by linear interpolation
     tprBelow = tpr[maxFprIndex]
-    tprAbove = tpr[maxFprIndex+1]
-    tprAt = ((tprAbove-tprBelow)/(fprAbove-fprBelow)*(desiredFPR-fprBelow) 
+    tprAbove = tpr[maxFprIndex + 1]
+    tprAt = ((tprAbove - tprBelow) / (fprAbove - fprBelow) * (desiredFPR - fprBelow)
              + tprBelow)
-    return tprAt,fpr,tpr
+    return tprAt, fpr, tpr
 
 def predictTest(trainFeatures, trainLabels, testFeatures):
     # Define the pipeline with KNN imputation and Random Forest
-    model = make_pipeline(KNNImputer(missing_values=-1, n_neighbors=5),
-                          RandomForestClassifier(n_estimators=100, random_state=42))
+    model = make_pipeline(
+        KNNImputer(missing_values=-1),  # KNNImputer without specifying n_neighbors here
+        RandomForestClassifier(n_jobs=-1, random_state=42)
+    )
     
-    # Track the start time
-    start_time = time.time()
+    # Define the parameter grid to search
+    param_grid = {
+        'knnimputer__n_neighbors': [3, 5, 7],  # Adding n_neighbors for KNN imputer
+        'randomforestclassifier__n_estimators': [100, 200, 300],
+        'randomforestclassifier__max_depth': [None, 10, 20],
+        'randomforestclassifier__min_samples_split': [2, 5, 10]
+    }
     
-    # Train the model
-    model.fit(trainFeatures, trainLabels)
+    # Initialize GridSearchCV
+    grid_search = GridSearchCV(
+        estimator=model, 
+        param_grid=param_grid, 
+        cv=5, 
+        scoring='roc_auc', 
+        n_jobs=-1,
+        verbose=0  # Suppress detailed output
+    )
     
-    # Track the end time after training
-    end_time_training = time.time()
-    elapsed_training = end_time_training - start_time
-    print(f"Time taken for training: {elapsed_training:.2f} seconds")
+    # Train the model with grid search
+    grid_search.fit(trainFeatures, trainLabels)
     
-    # Predict probabilities for the test set
-    testOutputs = model.predict_proba(testFeatures)[:, 1]
-    
-    # Track the end time after prediction
-    end_time_prediction = time.time()
-    elapsed_prediction = end_time_prediction - end_time_training
-    print(f"Time taken for prediction: {elapsed_prediction:.2f} seconds")
+    # Predict probabilities for the test set using the best model
+    testOutputs = grid_search.best_estimator_.predict_proba(testFeatures)[:, 1]
     
     return testOutputs
+
+
+
 
 # Run this code only if being used as a script, not being imported
 if __name__ == "__main__":
