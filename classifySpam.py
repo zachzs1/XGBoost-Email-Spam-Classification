@@ -14,6 +14,8 @@ from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import cross_val_score
 from sklearn.metrics import roc_auc_score
 
+desiredFPR = 0.01
+
 def aucCV(features, labels):
     # Define the pipeline with KNN imputation and Random Forest
     model = make_pipeline(KNNImputer(missing_values=-1, n_neighbors=5),
@@ -33,6 +35,19 @@ def aucCV(features, labels):
     print(f"Time taken for 10-fold cross-validation: {elapsed_time:.2f} seconds")
     
     return scores
+
+def tprAtFPR(labels,outputs,desiredFPR):
+    fpr,tpr,thres = roc_curve(labels,outputs)
+    # True positive rate for highest false positive rate < 0.01
+    maxFprIndex = np.where(fpr<=desiredFPR)[0][-1]
+    fprBelow = fpr[maxFprIndex]
+    fprAbove = fpr[maxFprIndex+1]
+    # Find TPR at exactly desired FPR by linear interpolation
+    tprBelow = tpr[maxFprIndex]
+    tprAbove = tpr[maxFprIndex+1]
+    tprAt = ((tprAbove-tprBelow)/(fprAbove-fprBelow)*(desiredFPR-fprBelow) 
+             + tprBelow)
+    return tprAt,fpr,tpr
 
 def predictTest(trainFeatures, trainLabels, testFeatures):
     # Define the pipeline with KNN imputation and Random Forest
@@ -82,6 +97,8 @@ if __name__ == "__main__":
     testLabels = labels[1::2]
     testOutputs = predictTest(trainFeatures, trainLabels, testFeatures)
     print("Test set AUC: ", roc_auc_score(testLabels, testOutputs))
+    tprAtDesiredFPR,fpr,tpr = tprAtFPR(testLabels,testOutputs,desiredFPR)
+    print(f'TPR at FPR = .01 {tprAtDesiredFPR}')
     
     # Examine outputs compared to labels
     sortIndex = np.argsort(testLabels)
