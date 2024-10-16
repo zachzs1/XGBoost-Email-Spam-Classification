@@ -13,31 +13,33 @@ from sklearn.impute import KNNImputer, SimpleImputer
 from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.metrics import roc_auc_score, roc_curve
+import xgboost as xgb
 
 desiredFPR = 0.01
 
 def aucCV(features, labels):
-    # Define the pipeline with KNN imputation and Random Forest
+    # Define the pipeline with KNN imputation and XGBoost with GPU support
     model = make_pipeline(
-        KNNImputer(missing_values=-1),  # KNNImputer without specifying n_neighbors here
-        RandomForestClassifier(n_jobs=-1, random_state=42)
+        KNNImputer(missing_values=-1),  # KNN Imputer to handle missing values
+        xgb.XGBClassifier(tree_method='gpu_hist', eval_metric='logloss', random_state=42)  # GPU acceleration
     )
     
-    # Define the parameter grid to search
+    # Define the parameter grid for XGBoost and KNNImputer
     param_grid = {
-        'knnimputer__n_neighbors': [3, 5, 7],  # Adding n_neighbors for KNN imputer
-        'randomforestclassifier__n_estimators': [100, 200, 300],
-        'randomforestclassifier__max_depth': [None, 10, 20],
-        'randomforestclassifier__min_samples_split': [2, 5, 10]
+        'knnimputer__n_neighbors': [3, 5, 7],  # KNN neighbors
+        'xgbclassifier__n_estimators': [100, 200, 300],  # Number of boosting rounds
+        'xgbclassifier__max_depth': [3, 5, 7],  # Max depth of trees
+        'xgbclassifier__learning_rate': [0.01, 0.1, 0.2],  # Learning rate for gradient boosting
+        'xgbclassifier__subsample': [0.8, 1.0]  # Fraction of samples used for training each tree
     }
     
     # Initialize GridSearchCV
     grid_search = GridSearchCV(
-        estimator=model, 
-        param_grid=param_grid, 
-        cv=5, 
-        scoring='roc_auc', 
-        n_jobs=-1,
+        estimator=model,
+        param_grid=param_grid,
+        cv=5,  # 5-fold cross-validation
+        scoring='roc_auc',  # Use AUC score as the evaluation metric
+        n_jobs=-1,  # Use all available cores
         verbose=0  # Suppress detailed output
     )
     
@@ -64,28 +66,29 @@ def tprAtFPR(labels, outputs, desiredFPR):
     return tprAt, fpr, tpr
 
 def predictTest(trainFeatures, trainLabels, testFeatures):
-    # Define the pipeline with KNN imputation and Random Forest
+    # Define the pipeline with KNN imputation and XGBoost with GPU support
     model = make_pipeline(
-        KNNImputer(missing_values=-1),  # KNNImputer without specifying n_neighbors here
-        RandomForestClassifier(n_jobs=-1, random_state=42)
+        KNNImputer(missing_values=-1),  # KNN Imputer
+        xgb.XGBClassifier(tree_method='gpu_hist', eval_metric='logloss', random_state=42)  # GPU acceleration
     )
     
-    # Define the parameter grid to search
+    # Define the parameter grid for XGBoost and KNNImputer
     param_grid = {
-        'knnimputer__n_neighbors': [3, 5, 7],  # Adding n_neighbors for KNN imputer
-        'randomforestclassifier__n_estimators': [100, 200, 300],
-        'randomforestclassifier__max_depth': [None, 10, 20],
-        'randomforestclassifier__min_samples_split': [2, 5, 10]
+        'knnimputer__n_neighbors': [3, 5, 7],
+        'xgbclassifier__n_estimators': [100, 200, 300],
+        'xgbclassifier__max_depth': [3, 5, 7],
+        'xgbclassifier__learning_rate': [0.01, 0.1, 0.2],
+        'xgbclassifier__subsample': [0.8, 1.0]
     }
     
     # Initialize GridSearchCV
     grid_search = GridSearchCV(
-        estimator=model, 
-        param_grid=param_grid, 
-        cv=5, 
-        scoring='roc_auc', 
+        estimator=model,
+        param_grid=param_grid,
+        cv=5,
+        scoring='roc_auc',
         n_jobs=-1,
-        verbose=0  # Suppress detailed output
+        verbose=0
     )
     
     # Train the model with grid search
@@ -95,8 +98,6 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
     testOutputs = grid_search.best_estimator_.predict_proba(testFeatures)[:, 1]
     
     return testOutputs
-
-
 
 
 # Run this code only if being used as a script, not being imported
