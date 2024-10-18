@@ -5,52 +5,34 @@ Demo of 10-fold cross-validation using Random Forest on spam data
 @author: Kevin S. Xu
 """
 
-import time
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.impute import KNNImputer, SimpleImputer
+from sklearn.impute import KNNImputer
 from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import GridSearchCV, cross_val_score
+from sklearn.model_selection import cross_val_score
 from sklearn.metrics import roc_auc_score, roc_curve
 import xgboost as xgb
 
 desiredFPR = 0.01
 
 def aucCV(features, labels):
-    # Define the pipeline with KNN imputation and XGBoost with GPU support
+    # Define the pipeline with KNN imputation and XGBoost using best parameters
     model = make_pipeline(
-        KNNImputer(missing_values=-1),  # KNN Imputer to handle missing values
-        xgb.XGBClassifier(tree_method='gpu_hist', eval_metric='logloss', random_state=42)  # GPU acceleration
+        KNNImputer(missing_values=-1, n_neighbors=3),  # Using n_neighbors=3 as found from grid search
+        xgb.XGBClassifier(
+            eval_metric='logloss', 
+            random_state=42,
+            learning_rate=0.1,  # Using the best learning rate
+            max_depth=5,        # Using the best max depth
+            n_estimators=100,    # Using the best number of estimators
+            subsample=1.0        # Using the best subsample
+        )
     )
     
-    # Define the parameter grid for XGBoost and KNNImputer
-    param_grid = {
-        'knnimputer__n_neighbors': [3, 5, 7],  # KNN neighbors
-        'xgbclassifier__n_estimators': [100, 200, 300],  # Number of boosting rounds
-        'xgbclassifier__max_depth': [3, 5, 7],  # Max depth of trees
-        'xgbclassifier__learning_rate': [0.01, 0.1, 0.2],  # Learning rate for gradient boosting
-        'xgbclassifier__subsample': [0.8, 1.0]  # Fraction of samples used for training each tree
-    }
-    
-    # Initialize GridSearchCV
-    grid_search = GridSearchCV(
-        estimator=model,
-        param_grid=param_grid,
-        cv=5,  # 5-fold cross-validation
-        scoring='roc_auc',  # Use AUC score as the evaluation metric
-        n_jobs=-1,  # Use all available cores
-        verbose=0  # Suppress detailed output
-    )
-    
-    # Perform grid search cross-validation
-    grid_search.fit(features, labels)
-    
-    # Return the best score from the grid search
-    print(f"Best parameters found: {grid_search.best_params_}")
-    print(f"Best AUC score: {grid_search.best_score_}")
-    
-    return grid_search.best_score_
+    # Perform 10-fold cross-validation and return mean AUC score
+    auc_scores = cross_val_score(model, features, labels, cv=10, scoring='roc_auc', n_jobs=-1)
+    return np.mean(auc_scores)
 
 def tprAtFPR(labels, outputs, desiredFPR):
     fpr, tpr, thres = roc_curve(labels, outputs)
@@ -66,36 +48,24 @@ def tprAtFPR(labels, outputs, desiredFPR):
     return tprAt, fpr, tpr
 
 def predictTest(trainFeatures, trainLabels, testFeatures):
-    # Define the pipeline with KNN imputation and XGBoost with GPU support
+    # Define the pipeline with KNN imputation and XGBoost using best parameters
     model = make_pipeline(
-        KNNImputer(missing_values=-1),  # KNN Imputer
-        xgb.XGBClassifier(tree_method='gpu_hist', eval_metric='logloss', random_state=42)  # GPU acceleration
+        KNNImputer(missing_values=-1, n_neighbors=3),  # Using n_neighbors=3 as found from grid search
+        xgb.XGBClassifier(
+            eval_metric='logloss',
+            random_state=42,
+            learning_rate=0.1,  # Using the best learning rate
+            max_depth=5,        # Using the best max depth
+            n_estimators=100,    # Using the best number of estimators
+            subsample=1.0        # Using the best subsample
+        )
     )
     
-    # Define the parameter grid for XGBoost and KNNImputer
-    param_grid = {
-        'knnimputer__n_neighbors': [3, 5, 7],
-        'xgbclassifier__n_estimators': [100, 200, 300],
-        'xgbclassifier__max_depth': [3, 5, 7],
-        'xgbclassifier__learning_rate': [0.01, 0.1, 0.2],
-        'xgbclassifier__subsample': [0.8, 1.0]
-    }
+    # Train the model with the training data
+    model.fit(trainFeatures, trainLabels)
     
-    # Initialize GridSearchCV
-    grid_search = GridSearchCV(
-        estimator=model,
-        param_grid=param_grid,
-        cv=5,
-        scoring='roc_auc',
-        n_jobs=-1,
-        verbose=0
-    )
-    
-    # Train the model with grid search
-    grid_search.fit(trainFeatures, trainLabels)
-    
-    # Predict probabilities for the test set using the best model
-    testOutputs = grid_search.best_estimator_.predict_proba(testFeatures)[:, 1]
+    # Predict probabilities for the test set
+    testOutputs = model.predict_proba(testFeatures)[:, 1]
     
     return testOutputs
 
@@ -122,7 +92,7 @@ if __name__ == "__main__":
     testLabels = labels[1::2]
     testOutputs = predictTest(trainFeatures, trainLabels, testFeatures)
     print("Test set AUC: ", roc_auc_score(testLabels, testOutputs))
-    tprAtDesiredFPR,fpr,tpr = tprAtFPR(testLabels,testOutputs,desiredFPR)
+    tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
     print(f'TPR at FPR = .01 {tprAtDesiredFPR}')
     
     # Examine outputs compared to labels
