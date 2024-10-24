@@ -291,10 +291,15 @@ if __name__ == "__main__":
         #print("Test set AUC: ", roc_auc_score(testLabels, testOutputs), f'|   TPR at FPR = .01: {tprAtDesiredFPR}')
     knn_avg = (np.mean([x[0] for x in knn_results]), np.mean([x[1] for x in knn_results]))
     mice_avg = (np.mean([x[0] for x in mice_results]), np.mean([x[1] for x in mice_results]))
+    knn_std = (np.std([x[0] for x in knn_results]), np.std([x[1] for x in knn_results]))
+    mice_std = (np.std([x[0] for x in mice_results]), np.std([x[1] for x in mice_results]))
     print('KNN Imputer Results:', knn_results)
     print('MICE Imputer Results:', mice_results)
     print('KNN Imputer Average (AUC, TPR):', knn_avg)
+    print('KNN Imputer Std Dev (AUC, TPR):', knn_std)
     print('MICE Imputer Average (AUC, TPR):', mice_avg)
+    print('MICE Imputer Std Dev (AUC, TPR):', mice_std)
+
     '''
     sortIndex = np.argsort(testLabels)
     nTestExamples = testLabels.size
