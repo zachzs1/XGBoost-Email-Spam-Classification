@@ -57,7 +57,6 @@ def plot_feature_importance(model, feature_names):
 
 def tune_hyperparameters(features, labels):
     # Define the XGBoost model (the base estimator)
-    xgb_model = xgb.XGBClassifier(eval_metric='logloss', random_state=42)
 
     # Define the parameter grid to search over
     def objective(trial):
@@ -98,15 +97,37 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
     trainFeatures_imputed = imputer.fit_transform(trainFeatures)
     testFeatures_imputed = imputer.transform(testFeatures)
     
+    initial_model = xgb.XGBClassifier(
+        eval_metric='logloss',
+        random_state=42,
+        learning_rate=0.1,
+        max_depth=3,
+        n_estimators=200,
+        subsample=1.0
+    )
+    initial_model.fit(trainFeatures_imputed, trainLabels)
+
+    importance = initial_model.get_booster().get_score(importance_type='gain')
+    # Extract feature indices from importance keys (e.g., 'f0', 'f1', etc.)
+    importance_values = list(importance.values())
+    threshold = np.percentile(importance_values, 50)
+    important_features = [int(f[1:]) for f, imp in importance.items() if imp > threshold]
+    #plot_feature_importance(xgb_model, feature_names=[f"Feature_{i}" for i in important_features])
+    #visualize_selected_features(features.shape[1], important_features)
+
+    # Select only the important features from the imputed training and test data
+    reduced_train_features_imputed = trainFeatures_imputed[:, important_features]
+    reduced_test_features_imputed = testFeatures_imputed[:, important_features]
+
     # Tune hyperparameters using Optuna
-    best_model = tune_hyperparameters(trainFeatures_imputed, trainLabels)
+    best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
     
     # Fit the best model on the entire training set
-    best_model.fit(trainFeatures_imputed, trainLabels)
+    best_model.fit(reduced_train_features_imputed, trainLabels)
     
     # Predict the probabilities of the positive class for the test set
-    testOutputs = best_model.predict_proba(testFeatures_imputed)[:, 1]
-    plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
+    testOutputs = best_model.predict_proba(reduced_test_features_imputed)[:, 1]
+    #plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
     return testOutputs
 
 if __name__ == "__main__":
