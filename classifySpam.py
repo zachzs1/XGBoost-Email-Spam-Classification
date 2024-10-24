@@ -10,6 +10,8 @@ from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.metrics import roc_auc_score, roc_curve
 import xgboost as xgb
 import optuna
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
 
 desiredFPR = 0.01
 
@@ -82,7 +84,7 @@ def tune_hyperparameters(features, labels):
     study = optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler())
 
     # Optimize the study with multiple jobs using `n_jobs`
-    study.optimize(objective, n_trials=2000, n_jobs=-1)  # Uses all available CPU cores for trials
+    study.optimize(objective, n_trials=500, n_jobs=-1)  # Uses all available CPU cores for trials
 
     print(f"Best parameters found: {study.best_params}")
     print(f"Best AUC score: {study.best_value:.4f}")
@@ -93,9 +95,13 @@ def tune_hyperparameters(features, labels):
 
 def predictTest(trainFeatures, trainLabels, testFeatures):
     # Impute missing values using KNNImputer
-    imputer = KNNImputer(missing_values=-1, n_neighbors=3)
-    trainFeatures_imputed = imputer.fit_transform(trainFeatures)
-    testFeatures_imputed = imputer.transform(testFeatures)
+    imputer = IterativeImputer(random_state=42)
+    trainFeaturesCopy = trainFeatures.copy()
+    trainFeaturesCopy[trainFeaturesCopy == -1] = np.nan
+    testFeaturesCopy = testFeatures.copy()
+    testFeaturesCopy[testFeaturesCopy == -1] = np.nan
+    trainFeatures_imputed = imputer.fit_transform(trainFeaturesCopy)
+    testFeatures_imputed = imputer.transform(testFeaturesCopy)
     
     initial_model = xgb.XGBClassifier(
         eval_metric='logloss',
@@ -103,7 +109,8 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
         learning_rate=0.1,
         max_depth=3,
         n_estimators=200,
-        subsample=1.0
+        subsample=1.0,
+        #missing=-1
     )
     initial_model.fit(trainFeatures_imputed, trainLabels)
 
@@ -112,7 +119,7 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
     importance_values = list(importance.values())
     threshold = np.percentile(importance_values, 50)
     important_features = [int(f[1:]) for f, imp in importance.items() if imp > threshold]
-    #plot_feature_importance(xgb_model, feature_names=[f"Feature_{i}" for i in important_features])
+    plot_feature_importance(initial_model, feature_names=[f"Feature_{i}" for i in important_features])
     #visualize_selected_features(features.shape[1], important_features)
 
     # Select only the important features from the imputed training and test data
@@ -120,8 +127,21 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
     reduced_test_features_imputed = testFeatures_imputed[:, important_features]
 
     # Tune hyperparameters using Optuna
-    best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
-    
+    #best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
+    best_model = xgb.XGBClassifier(
+        eval_metric='logloss',
+        random_state=42,
+        learning_rate=0.059570899098437186,
+        max_depth=3,
+        n_estimators=190,
+        subsample=0.6162218302874191,
+        colsample_bytree=0.5238538843208448,
+        gamma=0.14897009050327084,
+        min_child_weight=1,
+        reg_alpha=0.0950768790629103,
+        reg_lambda= 0.8399273699950727,
+        #missing=-1
+    )
     # Fit the best model on the entire training set
     best_model.fit(reduced_train_features_imputed, trainLabels)
     
@@ -129,6 +149,30 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
     testOutputs = best_model.predict_proba(reduced_test_features_imputed)[:, 1]
     #plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
     return testOutputs
+
+def visualize_selected_features(total_features, important_features):
+    """
+    Visualize all features and highlight the selected important features.
+    
+    Parameters:
+    - total_features: The total number of features in the dataset.
+    - important_features: A list of indices of the selected important features.
+    """
+    plt.figure(figsize=(12, 6))
+    all_features = np.arange(total_features)
+    
+    # Plot all features
+    plt.scatter(all_features, np.zeros_like(all_features), color='gray', label='All Features')
+    
+    # Highlight important features
+    plt.scatter(important_features, np.zeros_like(important_features), color='red', label='Important Features', s=100)
+    
+    # Plot settings
+    plt.title("Visualization of Selected Important Features")
+    plt.xlabel("Feature Index")
+    plt.yticks([])  # Remove y-axis labels
+    plt.legend(loc='upper right')
+    plt.show()
 
 if __name__ == "__main__":
     train1DataFilename = 'spamTrain1.csv'
