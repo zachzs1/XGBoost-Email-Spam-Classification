@@ -51,10 +51,30 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
     )
     xgb_model.fit(trainFeatures_imputed, trainLabels)
     testOutputs = xgb_model.predict_proba(testFeatures_imputed)[:, 1]
+    plot_feature_importance(xgb_model, feature_names=[f"Feature_{i}" for i in range(features.shape[1])])
     return testOutputs
 
+def plot_feature_importance(model, feature_names):
+    # Get the feature importance values
+    importance = model.get_booster().get_score(importance_type='gain')
+    # Sort the features by importance
+    sorted_importance = sorted(importance.items(), key=lambda x: x[1], reverse=True)
+    
+    # Plot the feature importances
+    plt.figure(figsize=(10, 6))
+    plt.barh([x[0] for x in sorted_importance], [x[1] for x in sorted_importance])
+    plt.xlabel("Feature Importance (Gain)")
+    plt.ylabel("Feature")
+    plt.title("Feature Importance using XGBoost")
+    plt.gca().invert_yaxis()
+    plt.show()
+
 if __name__ == "__main__":
-    data = np.loadtxt('./spamTrain1.csv', delimiter=',')
+    train1DataFilename = 'spamTrain1.csv'
+    train2DataFilename = 'spamTrain2.csv'
+    train1Data = np.loadtxt(train1DataFilename,delimiter=',')
+    train2Data = np.loadtxt(train2DataFilename,delimiter=',')
+    data = np.r_[train1Data,train2Data]
     shuffleIndex = np.arange(np.shape(data)[0])
     np.random.shuffle(shuffleIndex)
     data = data[shuffleIndex, :]
@@ -80,3 +100,4 @@ if __name__ == "__main__":
     plt.xlabel('Sorted example number')
     plt.ylabel('Output (predicted target)')
     plt.show()
+    
