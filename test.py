@@ -1,48 +1,108 @@
-import pandas as pd
+# Importing necessary libraries
 import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve
+from sklearn.impute import KNNImputer
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
 
-# Load the data
-data = pd.read_csv('./spamTrain1.csv')
+train1DataFilename = 'spamTrain1.csv'
+train2DataFilename = 'spamTrain2.csv'
+train1Data = np.loadtxt(train1DataFilename, delimiter=',')
+train2Data = np.loadtxt(train2DataFilename, delimiter=',')
+data = np.r_[train1Data, train2Data]
+shuffleIndex = np.arange(np.shape(data)[0])
+np.random.shuffle(shuffleIndex)
+data = data[shuffleIndex, :]
+features = data[:, :-1] 
+labels = data[:, -1]
+trainFeatures = features[0::2, :]
+trainLabels = labels[0::2]
+testFeatures = features[1::2, :]
+testLabels = labels[1::2]
+testOutputs = predictTest(trainFeatures, trainLabels, testFeatures)
+# Initializing imputers
+knn_imputer = KNNImputer(n_neighbors=3)
+mice_imputer = IterativeImputer(random_state=42)
 
-# Replace -1 (missing values) with NaN, to handle them separately if needed
-data.replace(-1, np.nan, inplace=True)
+# Lists to store results
+knn_auc_scores = []
+knn_tpr_scores = []
+mice_auc_scores = []
+mice_tpr_scores = []
 
-# Separate features (columns) and target (spam or not spam)
-features = data.iloc[:, :-1]  # All but last column are features
-target = data.iloc[:, -1]     # Last column is the target (spam or not)
+desired_fpr = 0.01
 
-# Create masks for spam and not spam
-spam_mask = target == 1
-not_spam_mask = target == 0
+# Function to calculate TPR at a given FPR
+def tpr_at_fpr(labels, outputs, desired_fpr):
+    fpr, tpr, _ = roc_curve(labels, outputs)
+    max_fpr_index = np.where(fpr <= desired_fpr)[0][-1]
+    fpr_below = fpr[max_fpr_index]
+    fpr_above = fpr[max_fpr_index + 1]
+    tpr_below = tpr[max_fpr_index]
+    tpr_above = tpr[max_fpr_index + 1]
+    tpr_at = ((tpr_above - tpr_below) / (fpr_above - fpr_below) * (desired_fpr - fpr_below) + tpr_below)
+    return tpr_at
 
-# Initialize dictionaries to store spam and not spam percentages for each feature
-spam_percentages = {}
-not_spam_percentages = {}
-
-# Loop through each feature (column)
-for feature in features.columns:
-    # Calculate the number of non-zero appearances of the feature in spam and not spam
-    spam_appearances = features.loc[spam_mask, feature].fillna(0).gt(0).sum()  # Non-zero entries in spam
-    not_spam_appearances = features.loc[not_spam_mask, feature].fillna(0).gt(0).sum()  # Non-zero entries in not spam
+# Running KNN Imputer 5 times
+for i in range(5):
+    # KNN Imputation
+    X_imputed_knn = knn_imputer.fit_transform(X)
     
-    # Total spam and not spam emails
-    total_spam = spam_mask.sum()
-    total_not_spam = not_spam_mask.sum()
+    # Splitting the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X_imputed_knn, y, test_size=0.2, random_state=42)
     
-    # Calculate percentages for spam and not spam
-    spam_percentage = (spam_appearances / total_spam) * 100
-    not_spam_percentage = (not_spam_appearances / total_not_spam) * 100
+    # Training the model
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
     
-    # Store the results
-    spam_percentages[feature] = spam_percentage
-    not_spam_percentages[feature] = not_spam_percentage
+    # Making predictions
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    
+    # Calculating AUC and TPR at desired FPR
+    auc_score = roc_auc_score(y_test, y_pred_proba)
+    tpr_score = tpr_at_fpr(y_test, y_pred_proba, desired_fpr)
+    
+    knn_auc_scores.append(auc_score)
+    knn_tpr_scores.append(tpr_score)
 
-# Convert the results to a DataFrame for easier viewing
-results = pd.DataFrame({
-    'Feature': features.columns,
-    'Spam Percentage': [spam_percentages[feature] for feature in features.columns],
-    'Not Spam Percentage': [not_spam_percentages[feature] for feature in features.columns]
-})
+# Running MICE Imputer 5 times
+for i in range(5):
+    # MICE Imputation
+    X_imputed_mice = mice_imputer.fit_transform(X)
+    
+    # Splitting the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X_imputed_mice, y, test_size=0.2, random_state=42)
+    
+    # Training the model
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    
+    # Making predictions
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    
+    # Calculating AUC and TPR at desired FPR
+    auc_score = roc_auc_score(y_test, y_pred_proba)
+    tpr_score = tpr_at_fpr(y_test, y_pred_proba, desired_fpr)
+    
+    mice_auc_scores.append(auc_score)
+    mice_tpr_scores.append(tpr_score)
 
-# Display the results
-print(results)
+# Calculating mean and standard deviation for AUC and TPR for both imputers
+knn_auc_mean = np.mean(knn_auc_scores)
+knn_auc_std = np.std(knn_auc_scores)
+knn_tpr_mean = np.mean(knn_tpr_scores)
+knn_tpr_std = np.std(knn_tpr_scores)
+
+mice_auc_mean = np.mean(mice_auc_scores)
+mice_auc_std = np.std(mice_auc_scores)
+mice_tpr_mean = np.mean(mice_tpr_scores)
+mice_tpr_std = np.std(mice_tpr_scores)
+
+# Printing results
+print(f'KNN Imputer - AUC Mean: {knn_auc_mean:.2f}, AUC Std Dev: {knn_auc_std:.2f}')
+print(f'KNN Imputer - TPR Mean: {knn_tpr_mean:.2f}, TPR Std Dev: {knn_tpr_std:.2f}')
+print(f'MICE Imputer - AUC Mean: {mice_auc_mean:.2f}, AUC Std Dev: {mice_auc_std:.2f}')
+print(f'MICE Imputer - TPR Mean: {mice_tpr_mean:.2f}, TPR Std Dev: {mice_tpr_std:.2f}')
