@@ -6,9 +6,7 @@ import xgboost as xgb
 from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import RFECV
 
-# Create a pipeline with imputation, feature selection, and the classifier
 def predictTest(trainFeatures, trainLabels, testFeatures):
-    # Create individual models
     initial_xgb_model = xgb.XGBClassifier(
         eval_metric='logloss',
         random_state=42,
@@ -24,35 +22,23 @@ def predictTest(trainFeatures, trainLabels, testFeatures):
         n_jobs=-1
     )
     
-    # Use RFECV for robust feature selection inside a pipeline
     feature_selector = RFECV(estimator=initial_xgb_model, step=1, cv=StratifiedKFold(3), scoring='roc_auc', n_jobs=-1)
-    
-    # Create a pipeline with KNNImputer, RFECV for feature selection, and the classifier
     pipeline = Pipeline([
         ('imputer', KNNImputer(missing_values=-1, n_neighbors=7)),
         ('feature_selection', feature_selector),
         ('classifier', initial_xgb_model)
     ])
 
-    # Cross-validation setup
     skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
     cross_val_predictions = np.zeros(trainLabels.shape)
 
-    # Perform cross-validation manually
     for train_index, val_index in skf.split(trainFeatures, trainLabels):
         X_train, X_val = trainFeatures[train_index], trainFeatures[val_index]
         y_train, y_val = trainLabels[train_index], trainLabels[val_index]
-
-        # Fit the pipeline on the training fold
         pipeline.fit(X_train, y_train)
-
-        # Predict probabilities for the validation fold
         cross_val_predictions[val_index] = pipeline.predict_proba(X_val)[:, 1]
 
-    # Fit the final pipeline on the entire training set
     pipeline.fit(trainFeatures, trainLabels)
-
-    # Predict the probabilities of the positive class for the test set
     testOutputs = pipeline.predict_proba(testFeatures)[:, 1]
     return testOutputs
 
