@@ -1,38 +1,20 @@
-# -*- coding: utf-8 -*-
-"""
-Demo of XGBoost with Hyperparameter Tuning and multiple evaluation metrics using 5-fold cross-validation on spam data
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.impute import KNNImputer
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score, cross_val_predict
 from sklearn.metrics import roc_auc_score, roc_curve
 import xgboost as xgb
 import optuna
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.feature_selection import SelectFromModel
+from sklearn.feature_selection import RFECV
 import warnings
 warnings.filterwarnings("ignore")
 
 desiredFPR = 0.01
-
-def aucCV(features, labels):
-    xgb_model = xgb.XGBClassifier(
-        eval_metric='logloss',
-        random_state=42,
-        learning_rate=0.1,
-        max_depth=3,
-        n_estimators=200,
-        subsample=1.0
-    )
-    imputer = KNNImputer(missing_values=-1, n_neighbors=3)
-    features_imputed = imputer.fit_transform(features)
-
-    # Using StratifiedKFold for cross-validation
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    auc_scores = cross_val_score(xgb_model, features_imputed, labels, cv=skf, scoring='roc_auc', n_jobs=-1)
-    return np.mean(auc_scores)
 
 def tprAtFPR(labels, outputs, desiredFPR):
     fpr, tpr, thres = roc_curve(labels, outputs)
@@ -94,18 +76,17 @@ def tune_hyperparameters(features, labels):
     # Return the best estimator with optimal parameters
     return xgb.XGBClassifier(eval_metric='logloss', random_state=42, **study.best_params)
 
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.pipeline import Pipeline
+from sklearn.impute import KNNImputer
+from sklearn.feature_selection import RFECV
+import xgboost as xgb
+import numpy as np
 
-def predictTest1(trainFeatures, trainLabels, testFeatures):
-    # Impute missing values using KNNImputer
-    imputer = IterativeImputer(random_state=42)
-    trainFeaturesCopy = trainFeatures.copy()
-    trainFeaturesCopy[trainFeaturesCopy == -1] = np.nan
-    testFeaturesCopy = testFeatures.copy()
-    testFeaturesCopy[testFeaturesCopy == -1] = np.nan
-    trainFeatures_imputed = imputer.fit_transform(trainFeaturesCopy)
-    testFeatures_imputed = imputer.transform(testFeaturesCopy)
-    
-    initial_model = xgb.XGBClassifier(
+# Create a pipeline with imputation, feature selection, and the classifier
+def predictTest(trainFeatures, trainLabels, testFeatures):
+    # Create individual models
+    initial_xgb_model = xgb.XGBClassifier(
         eval_metric='logloss',
         random_state=42,
         learning_rate=0.1,
@@ -113,24 +94,12 @@ def predictTest1(trainFeatures, trainLabels, testFeatures):
         n_estimators=200,
         subsample=1.0,
         n_jobs=-1
-        #missing=-1
     )
-    initial_model.fit(trainFeatures_imputed, trainLabels)
-
-    importance = initial_model.get_booster().get_score(importance_type='gain')
-    # Extract feature indices from importance keys (e.g., 'f0', 'f1', etc.)
-    importance_values = list(importance.values())
-    threshold = np.percentile(importance_values, 50)
-    important_features = [int(f[1:]) for f, imp in importance.items() if imp > threshold]
-    #plot_feature_importance(initial_model, feature_names=[f"Feature_{i}" for i in important_features])
-    #visualize_selected_features(features.shape[1], important_features)
-
-    # Select only the important features from the imputed training and test data
-    reduced_train_features_imputed = trainFeatures_imputed[:, important_features]
-    reduced_test_features_imputed = testFeatures_imputed[:, important_features]
-
-    # Tune hyperparameters using Optuna
-    #best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
+    
+    # Use RFECV for robust feature selection inside a pipeline
+    feature_selector = RFECV(estimator=initial_xgb_model, step=1, cv=StratifiedKFold(5), scoring='roc_auc', n_jobs=-1)
+    
+    # Create a final model
     best_model = xgb.XGBClassifier(
         eval_metric='logloss',
         random_state=42,
@@ -142,181 +111,37 @@ def predictTest1(trainFeatures, trainLabels, testFeatures):
         gamma=0.14897009050327084,
         min_child_weight=1,
         reg_alpha=0.0950768790629103,
-        reg_lambda= 0.8399273699950727,
+        reg_lambda=0.8399273699950727,
         n_jobs=-1
-        #missing=-1
     )
-    # Fit the best model on the entire training set
-    best_model.fit(reduced_train_features_imputed, trainLabels)
-    
+
+    # Create a pipeline with KNNImputer, RFECV for feature selection, and the classifier
+    pipeline = Pipeline([
+        ('imputer', KNNImputer(missing_values=-1, n_neighbors=7)),
+        ('feature_selection', feature_selector),
+        ('classifier', best_model)
+    ])
+
+    # Cross-validation setup
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cross_val_predictions = np.zeros(trainLabels.shape)
+
+    # Perform cross-validation manually
+    for train_index, val_index in skf.split(trainFeatures, trainLabels):
+        X_train, X_val = trainFeatures[train_index], trainFeatures[val_index]
+        y_train, y_val = trainLabels[train_index], trainLabels[val_index]
+
+        # Fit the pipeline on the training fold
+        pipeline.fit(X_train, y_train)
+
+        # Predict probabilities for the validation fold
+        cross_val_predictions[val_index] = pipeline.predict_proba(X_val)[:, 1]
+
+    # Fit the final pipeline on the entire training set
+    pipeline.fit(trainFeatures, trainLabels)
+
     # Predict the probabilities of the positive class for the test set
-    testOutputs = best_model.predict_proba(reduced_test_features_imputed)[:, 1]
-    #plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
-    return testOutputs
-
-def predictTest2(trainFeatures, trainLabels, testFeatures):
-    # Impute missing values using KNNImputer
-    imputer = KNNImputer(missing_values=-1, n_neighbors=3)
-    trainFeatures_imputed = imputer.fit_transform(trainFeatures)
-    testFeatures_imputed = imputer.transform(testFeatures)
-    
-    initial_model = xgb.XGBClassifier(
-        eval_metric='logloss',
-        random_state=42,
-        learning_rate=0.1,
-        max_depth=3,
-        n_estimators=200,
-        subsample=1.0,
-        n_jobs=-1
-        #missing=-1
-    )
-    initial_model.fit(trainFeatures_imputed, trainLabels)
-
-    importance = initial_model.get_booster().get_score(importance_type='gain')
-    # Extract feature indices from importance keys (e.g., 'f0', 'f1', etc.)
-    importance_values = list(importance.values())
-    threshold = np.percentile(importance_values, 50)
-    important_features = [int(f[1:]) for f, imp in importance.items() if imp > threshold]
-    #plot_feature_importance(initial_model, feature_names=[f"Feature_{i}" for i in important_features])
-    #visualize_selected_features(features.shape[1], important_features)
-
-    # Select only the important features from the imputed training and test data
-    reduced_train_features_imputed = trainFeatures_imputed[:, important_features]
-    reduced_test_features_imputed = testFeatures_imputed[:, important_features]
-
-    # Tune hyperparameters using Optuna
-    #best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
-    best_model = xgb.XGBClassifier(
-        eval_metric='logloss',
-        random_state=42,
-        learning_rate=0.059570899098437186,
-        max_depth=3,
-        n_estimators=190,
-        subsample=0.6162218302874191,
-        colsample_bytree=0.5238538843208448,
-        gamma=0.14897009050327084,
-        min_child_weight=1,
-        reg_alpha=0.0950768790629103,
-        reg_lambda= 0.8399273699950727,
-        n_jobs=-1
-        #missing=-1
-    )
-    # Fit the best model on the entire training set
-    best_model.fit(reduced_train_features_imputed, trainLabels)
-    
-    # Predict the probabilities of the positive class for the test set
-    testOutputs = best_model.predict_proba(reduced_test_features_imputed)[:, 1]
-    #plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
-    return testOutputs
-
-def predictTest3(trainFeatures, trainLabels, testFeatures):
-    # Impute missing values using KNNImputer
-    imputer = KNNImputer(missing_values=-1, n_neighbors=5)
-    trainFeatures_imputed = imputer.fit_transform(trainFeatures)
-    testFeatures_imputed = imputer.transform(testFeatures)
-    
-    initial_model = xgb.XGBClassifier(
-        eval_metric='logloss',
-        random_state=42,
-        learning_rate=0.1,
-        max_depth=3,
-        n_estimators=200,
-        subsample=1.0,
-        n_jobs=-1
-        #missing=-1
-    )
-    initial_model.fit(trainFeatures_imputed, trainLabels)
-
-    importance = initial_model.get_booster().get_score(importance_type='gain')
-    # Extract feature indices from importance keys (e.g., 'f0', 'f1', etc.)
-    importance_values = list(importance.values())
-    threshold = np.percentile(importance_values, 50)
-    important_features = [int(f[1:]) for f, imp in importance.items() if imp > threshold]
-    #plot_feature_importance(initial_model, feature_names=[f"Feature_{i}" for i in important_features])
-    #visualize_selected_features(features.shape[1], important_features)
-
-    # Select only the important features from the imputed training and test data
-    reduced_train_features_imputed = trainFeatures_imputed[:, important_features]
-    reduced_test_features_imputed = testFeatures_imputed[:, important_features]
-
-    # Tune hyperparameters using Optuna
-    #best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
-    best_model = xgb.XGBClassifier(
-        eval_metric='logloss',
-        random_state=42,
-        learning_rate=0.059570899098437186,
-        max_depth=3,
-        n_estimators=190,
-        subsample=0.6162218302874191,
-        colsample_bytree=0.5238538843208448,
-        gamma=0.14897009050327084,
-        min_child_weight=1,
-        reg_alpha=0.0950768790629103,
-        reg_lambda= 0.8399273699950727,
-        n_jobs=-1
-        #missing=-1
-    )
-    # Fit the best model on the entire training set
-    best_model.fit(reduced_train_features_imputed, trainLabels)
-    
-    # Predict the probabilities of the positive class for the test set
-    testOutputs = best_model.predict_proba(reduced_test_features_imputed)[:, 1]
-    #plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
-    return testOutputs
-
-def predictTest4(trainFeatures, trainLabels, testFeatures):
-    # Impute missing values using KNNImputer
-    imputer = KNNImputer(missing_values=-1, n_neighbors=7)
-    trainFeatures_imputed = imputer.fit_transform(trainFeatures)
-    testFeatures_imputed = imputer.transform(testFeatures)
-    
-    initial_model = xgb.XGBClassifier(
-        eval_metric='logloss',
-        random_state=42,
-        learning_rate=0.1,
-        max_depth=3,
-        n_estimators=200,
-        subsample=1.0,
-        n_jobs=-1
-        #missing=-1
-    )
-    initial_model.fit(trainFeatures_imputed, trainLabels)
-
-    importance = initial_model.get_booster().get_score(importance_type='gain')
-    # Extract feature indices from importance keys (e.g., 'f0', 'f1', etc.)
-    importance_values = list(importance.values())
-    threshold = np.percentile(importance_values, 50)
-    important_features = [int(f[1:]) for f, imp in importance.items() if imp > threshold]
-    #plot_feature_importance(initial_model, feature_names=[f"Feature_{i}" for i in important_features])
-    #visualize_selected_features(features.shape[1], important_features)
-
-    # Select only the important features from the imputed training and test data
-    reduced_train_features_imputed = trainFeatures_imputed[:, important_features]
-    reduced_test_features_imputed = testFeatures_imputed[:, important_features]
-
-    # Tune hyperparameters using Optuna
-    #best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
-    best_model = xgb.XGBClassifier(
-        eval_metric='logloss',
-        random_state=42,
-        learning_rate=0.059570899098437186,
-        max_depth=3,
-        n_estimators=190,
-        subsample=0.6162218302874191,
-        colsample_bytree=0.5238538843208448,
-        gamma=0.14897009050327084,
-        min_child_weight=1,
-        reg_alpha=0.0950768790629103,
-        reg_lambda= 0.8399273699950727,
-        n_jobs=-1
-        #missing=-1
-    )
-    # Fit the best model on the entire training set
-    best_model.fit(reduced_train_features_imputed, trainLabels)
-    
-    # Predict the probabilities of the positive class for the test set
-    testOutputs = best_model.predict_proba(reduced_test_features_imputed)[:, 1]
-    #plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
+    testOutputs = pipeline.predict_proba(testFeatures)[:, 1]
     return testOutputs
 
 def visualize_selected_features(total_features, important_features):
@@ -344,33 +169,12 @@ def visualize_selected_features(total_features, important_features):
     plt.show()
 
 if __name__ == "__main__":
-    '''
     train1DataFilename = 'spamTrain1.csv'
     train2DataFilename = 'spamTrain2.csv'
     train1Data = np.loadtxt(train1DataFilename, delimiter=',')
     train2Data = np.loadtxt(train2DataFilename, delimiter=',')
     data = np.r_[train1Data, train2Data]
-    shuffleIndex = np.arange(np.shape(data)[0])
-    np.random.shuffle(shuffleIndex)
-    data = data[shuffleIndex, :]
-    features = data[:, :-1] 
-    labels = data[:, -1]
-    print("5-fold Stratified Cross-Validation mean AUC: ", np.mean(aucCV(features, labels)))
-    trainFeatures = features[0::2, :]
-    trainLabels = labels[0::2]
-    testFeatures = features[1::2, :]
-    testLabels = labels[1::2]
-    '''
-    knn_results_3 = []
-    knn_results_5 = []
-    knn_results_7 = []
-    mice_results = []
-    for i in range(100):
-        train1DataFilename = 'spamTrain1.csv'
-        train2DataFilename = 'spamTrain2.csv'
-        train1Data = np.loadtxt(train1DataFilename, delimiter=',')
-        train2Data = np.loadtxt(train2DataFilename, delimiter=',')
-        data = np.r_[train1Data, train2Data]
+    for i in range(20):
         shuffleIndex = np.arange(np.shape(data)[0])
         np.random.shuffle(shuffleIndex)
         data = data[shuffleIndex, :]
@@ -381,99 +185,9 @@ if __name__ == "__main__":
         trainLabels = labels[0::2]
         testFeatures = features[1::2, :]
         testLabels = labels[1::2]
-        testOutputs = predictTest1(trainFeatures, trainLabels, testFeatures)
+        testOutputs = predictTest(trainFeatures, trainLabels, testFeatures)
+        print("Test set AUC: ", roc_auc_score(testLabels, testOutputs))
         tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
-        mice_results.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
-        #print("Test set AUC: ", roc_auc_score(testLabels, testOutputs), f'|   TPR at FPR = .01: {tprAtDesiredFPR}')
-    for i in range(100):
-        train1DataFilename = 'spamTrain1.csv'
-        train2DataFilename = 'spamTrain2.csv'
-        train1Data = np.loadtxt(train1DataFilename, delimiter=',')
-        train2Data = np.loadtxt(train2DataFilename, delimiter=',')
-        data = np.r_[train1Data, train2Data]
-        shuffleIndex = np.arange(np.shape(data)[0])
-        np.random.shuffle(shuffleIndex)
-        data = data[shuffleIndex, :]
-        features = data[:, :-1] 
-        labels = data[:, -1]
-        #print("5-fold Stratified Cross-Validation mean AUC: ", np.mean(aucCV(features, labels)))
-        trainFeatures = features[0::2, :]
-        trainLabels = labels[0::2]
-        testFeatures = features[1::2, :]
-        testLabels = labels[1::2]
-        testOutputs = predictTest2(trainFeatures, trainLabels, testFeatures)
-        tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
-        knn_results_3.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
-        #print("Test set AUC: ", roc_auc_score(testLabels, testOutputs), f'|   TPR at FPR = .01: {tprAtDesiredFPR}')
-    for i in range(100):
-        train1DataFilename = 'spamTrain1.csv'
-        train2DataFilename = 'spamTrain2.csv'
-        train1Data = np.loadtxt(train1DataFilename, delimiter=',')
-        train2Data = np.loadtxt(train2DataFilename, delimiter=',')
-        data = np.r_[train1Data, train2Data]
-        shuffleIndex = np.arange(np.shape(data)[0])
-        np.random.shuffle(shuffleIndex)
-        data = data[shuffleIndex, :]
-        features = data[:, :-1] 
-        labels = data[:, -1]
-        #print("5-fold Stratified Cross-Validation mean AUC: ", np.mean(aucCV(features, labels)))
-        trainFeatures = features[0::2, :]
-        trainLabels = labels[0::2]
-        testFeatures = features[1::2, :]
-        testLabels = labels[1::2]
-        testOutputs = predictTest3(trainFeatures, trainLabels, testFeatures)
-        tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
-        knn_results_5.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
-    for i in range(100):
-        train1DataFilename = 'spamTrain1.csv'
-        train2DataFilename = 'spamTrain2.csv'
-        train1Data = np.loadtxt(train1DataFilename, delimiter=',')
-        train2Data = np.loadtxt(train2DataFilename, delimiter=',')
-        data = np.r_[train1Data, train2Data]
-        shuffleIndex = np.arange(np.shape(data)[0])
-        np.random.shuffle(shuffleIndex)
-        data = data[shuffleIndex, :]
-        features = data[:, :-1] 
-        labels = data[:, -1]
-        #print("5-fold Stratified Cross-Validation mean AUC: ", np.mean(aucCV(features, labels)))
-        trainFeatures = features[0::2, :]
-        trainLabels = labels[0::2]
-        testFeatures = features[1::2, :]
-        testLabels = labels[1::2]
-        testOutputs = predictTest4(trainFeatures, trainLabels, testFeatures)
-        tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
-        knn_results_7.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
-    knn_avg_3 = (np.mean([x[0] for x in knn_results_3]), np.mean([x[1] for x in knn_results_3]))
-    knn_std_3 = (np.std([x[0] for x in knn_results_3]), np.std([x[1] for x in knn_results_3]))
-    knn_avg_5 = (np.mean([x[0] for x in knn_results_5]), np.mean([x[1] for x in knn_results_5]))
-    knn_std_5 = (np.std([x[0] for x in knn_results_5]), np.std([x[1] for x in knn_results_5]))
-    knn_avg_7 = (np.mean([x[0] for x in knn_results_7]), np.mean([x[1] for x in knn_results_7]))
-    knn_std_7 = (np.std([x[0] for x in knn_results_7]), np.std([x[1] for x in knn_results_7]))
-    mice_avg = (np.mean([x[0] for x in mice_results]), np.mean([x[1] for x in mice_results]))
-    mice_std = (np.std([x[0] for x in mice_results]), np.std([x[1] for x in mice_results]))
-    print('KNN 3 Imputer Results:', knn_results_3)
-    print('KNN 5 Imputer Results:', knn_results_5)
-    print('KNN 7 Imputer Results:', knn_results_7)
-    print('MICE Imputer Results:', mice_results)
-    print('KNN 3 Imputer Average (AUC, TPR):', knn_avg_3)
-    print('KNN 3 Imputer Std Dev (AUC, TPR):', knn_std_3)
-    print('KNN 5 Imputer Average (AUC, TPR):', knn_avg_5)
-    print('KNN 5 Imputer Std Dev (AUC, TPR):', knn_std_5)
-    print('KNN 7 Imputer Average (AUC, TPR):', knn_avg_7)
-    print('KNN 7 Imputer Std Dev (AUC, TPR):', knn_std_7)
-    print('MICE Imputer Average (AUC, TPR):', mice_avg)
-    print('MICE Imputer Std Dev (AUC, TPR):', mice_std)
-
-    '''
-    sortIndex = np.argsort(testLabels)
-    nTestExamples = testLabels.size
-    plt.subplot(2, 1, 1)
-    plt.plot(np.arange(nTestExamples), testLabels[sortIndex], 'b.')
-    plt.xlabel('Sorted example number')
-    plt.ylabel('Target')
-    plt.subplot(2, 1, 2)
-    plt.plot(np.arange(nTestExamples), testOutputs[sortIndex], 'r.')
-    plt.xlabel('Sorted example number')
-    plt.ylabel('Output (predicted target)')
-    plt.show()
-    '''
+        print(f'TPR at FPR = .01: {tprAtDesiredFPR}')
+        sortIndex = np.argsort(testLabels)
+        nTestExamples = testLabels.size
