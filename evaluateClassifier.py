@@ -11,8 +11,8 @@ from sklearn.metrics import roc_auc_score,roc_curve
 from classifySpam import predictTest
 
 desiredFPR = 0.01
-trainDataFilename = 'spamTrain2.csv'
-testDataFilename = 'spamTrain1.csv'
+trainDataFilename = 'spamTrain1.csv'
+testDataFilename = 'spamTrain2.csv'
 #testDataFilename = 'spamTest.csv'
 
 def tprAtFPR(labels,outputs,desiredFPR):
