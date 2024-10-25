@@ -112,6 +112,7 @@ def predictTest1(trainFeatures, trainLabels, testFeatures):
         max_depth=3,
         n_estimators=200,
         subsample=1.0,
+        n_jobs=-1
         #missing=-1
     )
     initial_model.fit(trainFeatures_imputed, trainLabels)
@@ -142,6 +143,7 @@ def predictTest1(trainFeatures, trainLabels, testFeatures):
         min_child_weight=1,
         reg_alpha=0.0950768790629103,
         reg_lambda= 0.8399273699950727,
+        n_jobs=-1
         #missing=-1
     )
     # Fit the best model on the entire training set
@@ -165,6 +167,7 @@ def predictTest2(trainFeatures, trainLabels, testFeatures):
         max_depth=3,
         n_estimators=200,
         subsample=1.0,
+        n_jobs=-1
         #missing=-1
     )
     initial_model.fit(trainFeatures_imputed, trainLabels)
@@ -195,6 +198,117 @@ def predictTest2(trainFeatures, trainLabels, testFeatures):
         min_child_weight=1,
         reg_alpha=0.0950768790629103,
         reg_lambda= 0.8399273699950727,
+        n_jobs=-1
+        #missing=-1
+    )
+    # Fit the best model on the entire training set
+    best_model.fit(reduced_train_features_imputed, trainLabels)
+    
+    # Predict the probabilities of the positive class for the test set
+    testOutputs = best_model.predict_proba(reduced_test_features_imputed)[:, 1]
+    #plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
+    return testOutputs
+
+def predictTest3(trainFeatures, trainLabels, testFeatures):
+    # Impute missing values using KNNImputer
+    imputer = KNNImputer(missing_values=-1, n_neighbors=5)
+    trainFeatures_imputed = imputer.fit_transform(trainFeatures)
+    testFeatures_imputed = imputer.transform(testFeatures)
+    
+    initial_model = xgb.XGBClassifier(
+        eval_metric='logloss',
+        random_state=42,
+        learning_rate=0.1,
+        max_depth=3,
+        n_estimators=200,
+        subsample=1.0,
+        n_jobs=-1
+        #missing=-1
+    )
+    initial_model.fit(trainFeatures_imputed, trainLabels)
+
+    importance = initial_model.get_booster().get_score(importance_type='gain')
+    # Extract feature indices from importance keys (e.g., 'f0', 'f1', etc.)
+    importance_values = list(importance.values())
+    threshold = np.percentile(importance_values, 50)
+    important_features = [int(f[1:]) for f, imp in importance.items() if imp > threshold]
+    #plot_feature_importance(initial_model, feature_names=[f"Feature_{i}" for i in important_features])
+    #visualize_selected_features(features.shape[1], important_features)
+
+    # Select only the important features from the imputed training and test data
+    reduced_train_features_imputed = trainFeatures_imputed[:, important_features]
+    reduced_test_features_imputed = testFeatures_imputed[:, important_features]
+
+    # Tune hyperparameters using Optuna
+    #best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
+    best_model = xgb.XGBClassifier(
+        eval_metric='logloss',
+        random_state=42,
+        learning_rate=0.059570899098437186,
+        max_depth=3,
+        n_estimators=190,
+        subsample=0.6162218302874191,
+        colsample_bytree=0.5238538843208448,
+        gamma=0.14897009050327084,
+        min_child_weight=1,
+        reg_alpha=0.0950768790629103,
+        reg_lambda= 0.8399273699950727,
+        n_jobs=-1
+        #missing=-1
+    )
+    # Fit the best model on the entire training set
+    best_model.fit(reduced_train_features_imputed, trainLabels)
+    
+    # Predict the probabilities of the positive class for the test set
+    testOutputs = best_model.predict_proba(reduced_test_features_imputed)[:, 1]
+    #plot_feature_importance(best_model, feature_names=[f"Feature_{i}" for i in range(trainFeatures.shape[1])])
+    return testOutputs
+
+def predictTest4(trainFeatures, trainLabels, testFeatures):
+    # Impute missing values using KNNImputer
+    imputer = KNNImputer(missing_values=-1, n_neighbors=7)
+    trainFeatures_imputed = imputer.fit_transform(trainFeatures)
+    testFeatures_imputed = imputer.transform(testFeatures)
+    
+    initial_model = xgb.XGBClassifier(
+        eval_metric='logloss',
+        random_state=42,
+        learning_rate=0.1,
+        max_depth=3,
+        n_estimators=200,
+        subsample=1.0,
+        n_jobs=-1
+        #missing=-1
+    )
+    initial_model.fit(trainFeatures_imputed, trainLabels)
+
+    importance = initial_model.get_booster().get_score(importance_type='gain')
+    # Extract feature indices from importance keys (e.g., 'f0', 'f1', etc.)
+    importance_values = list(importance.values())
+    threshold = np.percentile(importance_values, 50)
+    important_features = [int(f[1:]) for f, imp in importance.items() if imp > threshold]
+    #plot_feature_importance(initial_model, feature_names=[f"Feature_{i}" for i in important_features])
+    #visualize_selected_features(features.shape[1], important_features)
+
+    # Select only the important features from the imputed training and test data
+    reduced_train_features_imputed = trainFeatures_imputed[:, important_features]
+    reduced_test_features_imputed = testFeatures_imputed[:, important_features]
+
+    # Tune hyperparameters using Optuna
+    #best_model = tune_hyperparameters(reduced_train_features_imputed, trainLabels)
+    best_model = xgb.XGBClassifier(
+        eval_metric='logloss',
+        random_state=42,
+        learning_rate=0.059570899098437186,
+        max_depth=3,
+        n_estimators=190,
+        subsample=0.6162218302874191,
+        colsample_bytree=0.5238538843208448,
+        gamma=0.14897009050327084,
+        min_child_weight=1,
+        reg_alpha=0.0950768790629103,
+        reg_lambda= 0.8399273699950727,
+        n_jobs=-1
         #missing=-1
     )
     # Fit the best model on the entire training set
@@ -247,9 +361,11 @@ if __name__ == "__main__":
     testFeatures = features[1::2, :]
     testLabels = labels[1::2]
     '''
-    knn_results = []
+    knn_results_3 = []
+    knn_results_5 = []
+    knn_results_7 = []
     mice_results = []
-    for i in range(500):
+    for i in range(100):
         train1DataFilename = 'spamTrain1.csv'
         train2DataFilename = 'spamTrain2.csv'
         train1Data = np.loadtxt(train1DataFilename, delimiter=',')
@@ -269,7 +385,7 @@ if __name__ == "__main__":
         tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
         mice_results.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
         #print("Test set AUC: ", roc_auc_score(testLabels, testOutputs), f'|   TPR at FPR = .01: {tprAtDesiredFPR}')
-    for i in range(500):
+    for i in range(100):
         train1DataFilename = 'spamTrain1.csv'
         train2DataFilename = 'spamTrain2.csv'
         train1Data = np.loadtxt(train1DataFilename, delimiter=',')
@@ -287,16 +403,64 @@ if __name__ == "__main__":
         testLabels = labels[1::2]
         testOutputs = predictTest2(trainFeatures, trainLabels, testFeatures)
         tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
-        knn_results.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
+        knn_results_3.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
         #print("Test set AUC: ", roc_auc_score(testLabels, testOutputs), f'|   TPR at FPR = .01: {tprAtDesiredFPR}')
-    knn_avg = (np.mean([x[0] for x in knn_results]), np.mean([x[1] for x in knn_results]))
+    for i in range(100):
+        train1DataFilename = 'spamTrain1.csv'
+        train2DataFilename = 'spamTrain2.csv'
+        train1Data = np.loadtxt(train1DataFilename, delimiter=',')
+        train2Data = np.loadtxt(train2DataFilename, delimiter=',')
+        data = np.r_[train1Data, train2Data]
+        shuffleIndex = np.arange(np.shape(data)[0])
+        np.random.shuffle(shuffleIndex)
+        data = data[shuffleIndex, :]
+        features = data[:, :-1] 
+        labels = data[:, -1]
+        #print("5-fold Stratified Cross-Validation mean AUC: ", np.mean(aucCV(features, labels)))
+        trainFeatures = features[0::2, :]
+        trainLabels = labels[0::2]
+        testFeatures = features[1::2, :]
+        testLabels = labels[1::2]
+        testOutputs = predictTest3(trainFeatures, trainLabels, testFeatures)
+        tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
+        knn_results_5.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
+    for i in range(100):
+        train1DataFilename = 'spamTrain1.csv'
+        train2DataFilename = 'spamTrain2.csv'
+        train1Data = np.loadtxt(train1DataFilename, delimiter=',')
+        train2Data = np.loadtxt(train2DataFilename, delimiter=',')
+        data = np.r_[train1Data, train2Data]
+        shuffleIndex = np.arange(np.shape(data)[0])
+        np.random.shuffle(shuffleIndex)
+        data = data[shuffleIndex, :]
+        features = data[:, :-1] 
+        labels = data[:, -1]
+        #print("5-fold Stratified Cross-Validation mean AUC: ", np.mean(aucCV(features, labels)))
+        trainFeatures = features[0::2, :]
+        trainLabels = labels[0::2]
+        testFeatures = features[1::2, :]
+        testLabels = labels[1::2]
+        testOutputs = predictTest4(trainFeatures, trainLabels, testFeatures)
+        tprAtDesiredFPR, fpr, tpr = tprAtFPR(testLabels, testOutputs, desiredFPR)
+        knn_results_7.append((roc_auc_score(testLabels, testOutputs), tprAtDesiredFPR))
+    knn_avg_3 = (np.mean([x[0] for x in knn_results_3]), np.mean([x[1] for x in knn_results_3]))
+    knn_std_3 = (np.std([x[0] for x in knn_results_3]), np.std([x[1] for x in knn_results_3]))
+    knn_avg_5 = (np.mean([x[0] for x in knn_results_5]), np.mean([x[1] for x in knn_results_5]))
+    knn_std_5 = (np.std([x[0] for x in knn_results_5]), np.std([x[1] for x in knn_results_5]))
+    knn_avg_7 = (np.mean([x[0] for x in knn_results_7]), np.mean([x[1] for x in knn_results_7]))
+    knn_std_7 = (np.std([x[0] for x in knn_results_7]), np.std([x[1] for x in knn_results_7]))
     mice_avg = (np.mean([x[0] for x in mice_results]), np.mean([x[1] for x in mice_results]))
-    knn_std = (np.std([x[0] for x in knn_results]), np.std([x[1] for x in knn_results]))
     mice_std = (np.std([x[0] for x in mice_results]), np.std([x[1] for x in mice_results]))
-    print('KNN Imputer Results:', knn_results)
+    print('KNN 3 Imputer Results:', knn_results_3)
+    print('KNN 5 Imputer Results:', knn_results_5)
+    print('KNN 7 Imputer Results:', knn_results_7)
     print('MICE Imputer Results:', mice_results)
-    print('KNN Imputer Average (AUC, TPR):', knn_avg)
-    print('KNN Imputer Std Dev (AUC, TPR):', knn_std)
+    print('KNN 3 Imputer Average (AUC, TPR):', knn_avg_3)
+    print('KNN 3 Imputer Std Dev (AUC, TPR):', knn_std_3)
+    print('KNN 5 Imputer Average (AUC, TPR):', knn_avg_5)
+    print('KNN 5 Imputer Std Dev (AUC, TPR):', knn_std_5)
+    print('KNN 7 Imputer Average (AUC, TPR):', knn_avg_7)
+    print('KNN 7 Imputer Std Dev (AUC, TPR):', knn_std_7)
     print('MICE Imputer Average (AUC, TPR):', mice_avg)
     print('MICE Imputer Std Dev (AUC, TPR):', mice_std)
 
